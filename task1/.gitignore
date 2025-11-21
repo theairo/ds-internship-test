@@ -1,0 +1,7 @@
+# Model weights
+mnt_ner_model/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+__pycache__
