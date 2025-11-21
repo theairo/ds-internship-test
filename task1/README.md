@@ -1,7 +1,7 @@
 # Phase 1: Proof of Concept
 
 ## Model & Dataset
-- Dataset: 120 samples (1:1 Positive/Negative ratio)
+- Dataset: 240 samples (1:1 Positive/Negative ratio)
 - Model: bert-base-cased (Pre-trained)
 
 ## Training Details
@@ -11,10 +11,10 @@
     - API calls: 13 (1 failed: "Model is overloaded")
 
 ## Evaluation
-- Precision: 0.8780
-- Recall: 0.8780
-- F1 Score: 0.8780
-- Loss: 0.0292
+- Precision: 0.8333
+- Recall:    0.9375
+- F1 Score:  0.8824
+- Loss:      0.0700
 
 ## Inference Test
 - Sentence: 'Mount Rainier is visible from Seattle on clear days.'
