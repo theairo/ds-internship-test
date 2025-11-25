@@ -1,162 +1,283 @@
 import argparse
-import numpy as np
-from datasets import load_dataset
+import torch
 from transformers import (
     AutoTokenizer,
     AutoModelForTokenClassification,
-    Trainer,
-    TrainingArguments,
-    DataCollatorForTokenClassification
 )
 from pathlib import Path
-import evaluate
+import pandas as pd
 
-# Paths
-script_dir = Path(__file__).parent.resolve()
-data_dir = script_dir / "data" / "final"
-model_dir = "./mnt_ner_model"
+class MountainNER:
+    def __init__(self, model_path, device=None):
+        # 1. Smart Device Handling
+        # If user doesn't specify, auto-detect CUDA (GPU)
+        if device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
 
-# Label Mappings
-labels = ["O", "B-MNT", "I-MNT"]
-label2id = {l: i for i, l in enumerate(labels)}
-id2label = {i: l for l, i in label2id.items()}
+        print(f"Loading model from {model_path} to {self.device}...")
 
-metric = evaluate.load("seqeval")
-
-# Metrics computation
-def compute_metrics(pred_and_labels):
-    preds, true_labels = pred_and_labels
-    preds = np.argmax(preds, axis=2)
-
-    true_preds, true_refs = [], []
-    for pred_seq, label_seq in zip(preds, true_labels):
-        filtered_preds, filtered_labels = [], []
-        for p, l in zip(pred_seq, label_seq):
-            if l == -100:
-                continue
-            filtered_preds.append(id2label[p])
-            filtered_labels.append(id2label[l])
-        true_preds.append(filtered_preds)
-        true_refs.append(filtered_labels)
-
-    results = metric.compute(predictions=true_preds, references=true_refs)
-    return {
-        "precision": results["overall_precision"],
-        "recall": results["overall_recall"],
-        "f1": results["overall_f1"],
-        "accuracy": results["overall_accuracy"]
-    }
-
-# Tokenizer and label alignment
-tokenizer = AutoTokenizer.from_pretrained(model_dir)
-
-def tokenize_and_align_labels(examples):
-    """
-    Tokenizes and aligns word-level NER labels for training a token classification model.
-    
-    This function:
-    1. Tokenizes the words
-    2. Aligns BIO labels to the new tokens.
-    3. Converts 'B-' to 'I-' for any subsequent subword pieces
-    4. Sets the special tokens to -100 so they are ignored in loss computation.
-
-    Args:
-        examples (dict): {"tokens": [...], "ner_tags": [...]} for a batch of examples.
-
-    Returns:
-        dict: tokenized inputs with an added "labels" key aligned for training.
-    """
-    # Tokenize the words
-    tokenized_inputs = tokenizer(
-        examples["tokens"], 
-        is_split_into_words=True, 
-        truncation=True
-    )
-    
-    labels_aligned = []
-    # examples["ner_tags"] is a list of lists of strings (e.g., [["B-MNT", "O"], ...])
-    for i, label in enumerate(examples["ner_tags"]):
-        word_ids = tokenized_inputs.word_ids(batch_index=i)
-        previous_word_idx = None
-        label_ids = []
-        for word_idx in word_ids:
-            if word_idx is None:
-                label_ids.append(-100)  # Ignored in loss
-            elif word_idx != previous_word_idx:
-                # Start of a new word
-                label_ids.append(label2id[label[word_idx]])
-            else:
-                # Subword parts: convert B- tag to I- tag
-                if label[word_idx].startswith("B-"):
-                    label_ids.append(label2id[label[word_idx].replace("B-", "I-")])
-                else:
-                    label_ids.append(label2id[label[word_idx]])
-            previous_word_idx = word_idx
-        labels_aligned.append(label_ids)
+        # 2. Load Artifacts
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        self.model = AutoModelForTokenClassification.from_pretrained(model_path)
         
-    tokenized_inputs["labels"] = labels_aligned
-    return tokenized_inputs
+        # Move model to GPU if available
+        self.model.to(self.device)
+        self.model.eval() # Important: Set to evaluation mode (turns off Dropout)
 
-# Load the model and trainer
-model = AutoModelForTokenClassification.from_pretrained(model_dir)
-data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
+        # 3. Load Labels dynamically from the model config
+        # This is better than hardcoding ["O", "B-MNT"...]
+        self.id2label = self.model.config.id2label
+        self.label2id = self.model.config.label2id
 
-trainer = Trainer(
-    model=model,
-    args=TrainingArguments(output_dir="/tmp_eval", per_device_eval_batch_size=8),
-    data_collator=data_collator,
-    compute_metrics=compute_metrics
-)
+    def predict(self, sentences):
+        # 1. Handle single string vs list input
+        if isinstance(sentences, str):
+            sentences = [sentences]
+            
+        # 2. Tokenize (using self.tokenizer)
+        inputs = self.tokenizer(
+            sentences, 
+            return_tensors="pt", 
+            padding=True, 
+            truncation=True,
+            is_split_into_words=False
+        ).to(self.device) # Move data to GPU if available
+        
+        # 3. Inference
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        
+        # 4. Get Predictions
+        # Move back to CPU for numpy, calculate argmax
+        predictions = outputs.logits.argmax(dim=2).cpu().numpy()
+        
+        results = []
 
-def evaluate_test_set():
-    data_files = {"test": str(data_dir / "test.jsonl")}
-    dataset = load_dataset("json", data_files=data_files)
-    tokenized_test = dataset["test"].map(tokenize_and_align_labels, batched=True)
+        # 5. The Alignment Logic (Your Logic + Fixes)
+        for i, sentence in enumerate(sentences):
+            word_ids = inputs.word_ids(batch_index=i)
+            previous_word_idx = None
+            extracted_entities = []
+            
+            # Get the tokens so we don't rely on .split()
+            tokens = self.tokenizer.convert_ids_to_tokens(inputs["input_ids"][i])
 
-    print("Evaluating on test set...")
-    metrics = trainer.evaluate(tokenized_test)
+            current_word = ""
+            current_label = None
 
-    print("\n---------------- REPORT ----------------")
-    print(f"Precision: {metrics['eval_precision']:.4f}")
-    print(f"Recall:    {metrics['eval_recall']:.4f}")
-    print(f"F1 Score:  {metrics['eval_f1']:.4f}")
-    print(f"Loss:      {metrics['eval_loss']:.4f}")
-    print("----------------------------------------")
+            for idx, word_idx in enumerate(word_ids):
+                # Skip special tokens (None)
+                if word_idx is None:
+                    continue
+                
+                # If it's a new word (start of a word)
+                if word_idx != previous_word_idx:
+                    # Save the previous word if it existed
+                    if current_word:
+                        extracted_entities.append((current_word, current_label))
+                    
+                    # Start a new word
+                    current_word = tokens[idx]
+                    current_label = self.id2label[predictions[i][idx]]
+                    
+                    # Clean up the "##" from BERT tokens if you want pretty text
+                    # (Optional depending on how you want to display it)
+                    
+                else:
+                    # It's a subword (e.g., "##tain"), append it to current_word
+                    part = tokens[idx]
+                    if part.startswith("##"):
+                        current_word += part[2:]
+                    else:
+                        current_word += part
+                        
+                previous_word_idx = word_idx
+            
+            # Append the last word
+            if current_word:
+                extracted_entities.append((current_word, current_label))
+                
+            results.append(extracted_entities)
+        
+        return results
+    
+    def clean_predictions(self, batch_results):
+        """
+        Cleans the raw BIO tags into human-readable strings.
+        Handles the batch output from predict().
+        """
+        batch_cleaned = []
 
-def predict_sentences(sentences):
-    inputs = tokenizer(sentences, is_split_into_words=False, return_tensors="pt", truncation=True, padding=True)
-    outputs = model(**inputs)
-    predictions = np.argmax(outputs.logits.detach().numpy(), axis=2)
+        # Loop through each sentence in the batch
+        for sentence_results in batch_results:
+            clean_entities = []
+            current_entity = []
+            
+            for word, label in sentence_results:
+                # B-MNT: Start of a new entity
+                if label.startswith("B-"):
+                    if current_entity:
+                        clean_entities.append(" ".join(current_entity))
+                        current_entity = []
+                    current_entity.append(word)
+                
+                # I-MNT: Continuation of an entity
+                elif label.startswith("I-") and current_entity:
+                    current_entity.append(word)
+                
+                # O: Outside or non-mountain
+                else:
+                    if current_entity:
+                        clean_entities.append(" ".join(current_entity))
+                        current_entity = []
+            
+            # Catch any entity left at the very end of the sentence
+            if current_entity:
+                clean_entities.append(" ".join(current_entity))
+            
+            batch_cleaned.append(clean_entities)
+            
+        return batch_cleaned
+    
+    def evaluate_file(self, test_file_path):
+        """
+        Loads a test dataset, calculates Overall metrics, 
+        and then splits metrics by Language (EN/UA).
+        """
+        import json
+        from seqeval.metrics import classification_report, f1_score
+        
+        print(f"Loading test data from {test_file_path}...")
+        
+        # Lists to store data
+        sentences = []
+        ground_truth = []
+        languages = [] # 1. New list to track language
+        
+        # Load File
+        with open(test_file_path, 'r', encoding='utf-8') as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                f.seek(0)
+                data = [json.loads(line) for line in f]
 
-    for i, sentence in enumerate(sentences):
-        word_ids = inputs.word_ids(batch_index=i) 
-        previous_word_idx = None
-        pred_labels = []
+        # Extract data
+        for item in data:
+            sentences.append(" ".join(item['tokens']))
+            ground_truth.append(item['ner_tags'])
+            # Get language (default to 'unknown' if missing)
+            languages.append(item.get('language', 'unknown'))
 
-        for token_idx, word_idx in enumerate(word_ids):
-            if word_idx is None:
-                continue
-            if word_idx != previous_word_idx:
-                pred_labels.append(id2label[predictions[i][token_idx]])
-            previous_word_idx = word_idx
+        # Run Prediction
+        print(f"Running inference on {len(sentences)} examples...")
+        batch_predictions = self.predict(sentences)
+        
+        # Align Predictions with Ground Truth
+        true_labels_all = []
+        pred_labels_all = []
+        
+        for i, sent_preds in enumerate(batch_predictions):
+            preds_only = [label for word, label in sent_preds]
+            true_only = ground_truth[i]
+            
+            # Safety Truncation
+            min_len = min(len(preds_only), len(true_only))
+            pred_labels_all.append(preds_only[:min_len])
+            true_labels_all.append(true_only[:min_len])
 
+        # --- ORCHESTRATION ---
+        metrics_report = {}
 
-        words = sentence.split()
+        # A. Calculate Overall Metrics
+        # We call our helper instead of classification_report directly
+        metrics_report['Overall'] = self._get_filtered_report(true_labels_all, pred_labels_all)
 
-        words = words[:len(pred_labels)]
-        print(f"\nSentence: {sentence}")
-        print("Predictions:", list(zip(words, pred_labels)))
+        # B. Calculate Per-Language Metrics
+        unique_langs = set(languages)
+        for lang in unique_langs:
+            lang_true = [t for t, l in zip(true_labels_all, languages) if l == lang]
+            lang_pred = [p for p, l in zip(pred_labels_all, languages) if l == lang]
+            
+            if lang_true:
+                metrics_report[lang] = self._get_filtered_report(lang_true, lang_pred)
 
+        return metrics_report
+
+    def _get_filtered_report(self, true_labels, pred_labels):
+        """
+        Helper: Generates report and removes micro/macro/weighted averages.
+        """
+        from seqeval.metrics import classification_report
+        
+        # 1. Generate the full dictionary
+        report = classification_report(true_labels, pred_labels, output_dict=True)
+        
+        # 2. Remove the clutter
+        # .pop(key, None) safely removes the key if it exists, without crashing if it's missing
+        for key in ['micro avg', 'macro avg', 'weighted avg']:
+            report.pop(key, None)
+            
+        return report
 
 # Command line interface
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser(description="NER Inference & Evaluation")
+    
+    # It is good practice to let the user specify where the model is
+    parser.add_argument("--model_path", type=str, default="./weights", help="Path to saved model")
+    parser.add_argument("--test_file", type=str, default="./data/final/test.jsonl", help="Path to test dataset")
+    
+    # Your original arguments
     parser.add_argument("--test", action="store_true", help="Evaluate on test set")
     parser.add_argument("--predict", nargs="+", help="Run prediction on given sentences")
+    
     args = parser.parse_args()
 
-    if args.test:
-        evaluate_test_set()
+    # 1. INITIALIZE THE CLASS ONCE
+    # This loads the heavy weights into memory
+    try:
+        ner_system = MountainNER(model_path=args.model_path)
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        exit(1)
 
+    # 2. HANDLE PREDICTION
     if args.predict:
-        predict_sentences(args.predict)
+        print(f"\nRunning inference on {len(args.predict)} sentence(s)...\n")
+        
+        # Call the method inside the class
+        results = ner_system.predict(args.predict)
+        
+        
+        # The class returns raw data, so we print it nicely here in the CLI
+        for sentence, entities in zip(args.predict, results):
+            print(f"Input: {sentence}")
+            print(f"Found: {entities}")
+            print("-" * 30)
+        
+        print("\n", ner_system.clean_predictions(results))
+    
+    # 3. HANDLE EVALUATION
+    if args.test:
+        # 1. Run evaluation (Returns a dictionary of dictionaries)
+        results = ner_system.evaluate_file(args.test_file)
+
+        # 2. Loop through each report (Overall, EN, UA) and print nicely
+        for language, metrics_dict in results.items():
+            print(f"\n{'='*20}")
+            print(f"REPORT: {language}")
+            print(f"{'='*20}")
+            
+            # Convert to DataFrame for pretty printing
+            df = pd.DataFrame(metrics_dict).transpose()
+            
+            # Optional: Drop the confusing average rows to keep it clean
+            df_clean = df.drop(['micro avg', 'macro avg', 'weighted avg'], errors='ignore')
+            
+            # Round numbers to 2 decimal places for readability
+            print(df_clean.round(2).to_string())
+

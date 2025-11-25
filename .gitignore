@@ -5,3 +5,9 @@ mnt_ner_model/
 .ipynb_checkpoints/
 
 __pycache__
+
+task2/
+
+logs/
+
+data/

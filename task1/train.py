@@ -22,7 +22,7 @@ label2id = {l: i for i, l in enumerate(labels)}
 id2label = {i: l for l, i in label2id.items()}
 
 # Tokenizer
-tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
+tokenizer = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
 
 def tokenize_and_align_labels(examples):
     """
@@ -88,7 +88,7 @@ tokenized_datasets = dataset_hf.map(tokenize_and_align_labels, batched=True)
 
 # Model Initialization
 model = AutoModelForTokenClassification.from_pretrained(
-    "bert-base-cased",
+    "bert-base-multilingual-cased",
     num_labels=len(labels),
     id2label=id2label,
     label2id=label2id
@@ -102,13 +102,15 @@ training_args = TrainingArguments(
     output_dir="./mnt_ner_model",
     eval_strategy="epoch",
     save_strategy="epoch",
+    logging_strategy="steps",
+    logging_dir="./logs",
     learning_rate=5e-5,
     per_device_train_batch_size=4, 
     per_device_eval_batch_size=4,
     num_train_epochs=5, 
     weight_decay=0.01,
     save_total_limit=1,
-    logging_steps=2,
+    logging_steps=5,
 )
 
 # Trainer
