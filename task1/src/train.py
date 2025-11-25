@@ -97,7 +97,7 @@ model = AutoModelForTokenClassification.from_pretrained(
 # Data Collator (dynamic padding, tensor conversion, attention mask)
 data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
 
-# Training Arguments (default for NER)
+# Training Arguments
 training_args = TrainingArguments(
     output_dir="./mnt_ner_model",
     eval_strategy="epoch",

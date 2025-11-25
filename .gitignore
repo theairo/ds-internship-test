@@ -10,4 +10,4 @@ task2/
 
 logs/
 
-data/
+task1/data/*

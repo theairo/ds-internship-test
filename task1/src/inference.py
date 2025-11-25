@@ -8,35 +8,37 @@ from pathlib import Path
 import pandas as pd
 
 class MountainNER:
-    def __init__(self, model_path, device=None):
-        # 1. Smart Device Handling
-        # If user doesn't specify, auto-detect CUDA (GPU)
+    def __init__(self, device=None):
+
+        # If doesn't specify, auto-detect CUDA
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
             self.device = device
 
-        print(f"Loading model from {model_path} to {self.device}...")
+        # Model is stored on Hugging Face
+        repo_id = "nikolai-domashenko/mnt-ner-model"
 
-        # 2. Load Artifacts
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.model = AutoModelForTokenClassification.from_pretrained(model_path)
+        print(f"Loading model from {repo_id} to {self.device}...")
+
+        # Load Artifacts
+        self.tokenizer = AutoTokenizer.from_pretrained(repo_id)
+        self.model = AutoModelForTokenClassification.from_pretrained(repo_id)
         
         # Move model to GPU if available
         self.model.to(self.device)
         self.model.eval() # Important: Set to evaluation mode (turns off Dropout)
 
-        # 3. Load Labels dynamically from the model config
-        # This is better than hardcoding ["O", "B-MNT"...]
+        # Load Labels dynamically from the model config
         self.id2label = self.model.config.id2label
         self.label2id = self.model.config.label2id
 
     def predict(self, sentences):
-        # 1. Handle single string vs list input
+        # Handle single string vs list input
         if isinstance(sentences, str):
             sentences = [sentences]
             
-        # 2. Tokenize (using self.tokenizer)
+        # Tokenize (using self.tokenizer)
         inputs = self.tokenizer(
             sentences, 
             return_tensors="pt", 
@@ -45,17 +47,17 @@ class MountainNER:
             is_split_into_words=False
         ).to(self.device) # Move data to GPU if available
         
-        # 3. Inference
+        # Inference
         with torch.no_grad():
             outputs = self.model(**inputs)
         
-        # 4. Get Predictions
+        # Get Predictions
         # Move back to CPU for numpy, calculate argmax
         predictions = outputs.logits.argmax(dim=2).cpu().numpy()
         
         results = []
 
-        # 5. The Alignment Logic (Your Logic + Fixes)
+        # The Alignment Logic (Your Logic + Fixes)
         for i, sentence in enumerate(sentences):
             word_ids = inputs.word_ids(batch_index=i)
             previous_word_idx = None
@@ -82,11 +84,8 @@ class MountainNER:
                     current_word = tokens[idx]
                     current_label = self.id2label[predictions[i][idx]]
                     
-                    # Clean up the "##" from BERT tokens if you want pretty text
-                    # (Optional depending on how you want to display it)
-                    
                 else:
-                    # It's a subword (e.g., "##tain"), append it to current_word
+                    # It's a subword, append it to current_word
                     part = tokens[idx]
                     if part.startswith("##"):
                         current_word += part[2:]
@@ -154,7 +153,7 @@ class MountainNER:
         # Lists to store data
         sentences = []
         ground_truth = []
-        languages = [] # 1. New list to track language
+        languages = []
         
         # Load File
         with open(test_file_path, 'r', encoding='utf-8') as f:
@@ -168,7 +167,6 @@ class MountainNER:
         for item in data:
             sentences.append(" ".join(item['tokens']))
             ground_truth.append(item['ner_tags'])
-            # Get language (default to 'unknown' if missing)
             languages.append(item.get('language', 'unknown'))
 
         # Run Prediction
@@ -187,15 +185,12 @@ class MountainNER:
             min_len = min(len(preds_only), len(true_only))
             pred_labels_all.append(preds_only[:min_len])
             true_labels_all.append(true_only[:min_len])
-
-        # --- ORCHESTRATION ---
         metrics_report = {}
 
-        # A. Calculate Overall Metrics
-        # We call our helper instead of classification_report directly
+        # Calculate Overall Metrics
         metrics_report['Overall'] = self._get_filtered_report(true_labels_all, pred_labels_all)
 
-        # B. Calculate Per-Language Metrics
+        # Calculate Per-Language Metrics
         unique_langs = set(languages)
         for lang in unique_langs:
             lang_true = [t for t, l in zip(true_labels_all, languages) if l == lang]
@@ -212,40 +207,36 @@ class MountainNER:
         """
         from seqeval.metrics import classification_report
         
-        # 1. Generate the full dictionary
+        # Generate the full dictionary
         report = classification_report(true_labels, pred_labels, output_dict=True)
         
-        # 2. Remove the clutter
+        # Remove the clutter
         # .pop(key, None) safely removes the key if it exists, without crashing if it's missing
         for key in ['micro avg', 'macro avg', 'weighted avg']:
             report.pop(key, None)
             
         return report
 
-# Command line interface
+# Command line interface (CLI)
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="NER Inference & Evaluation")
-    
-    # It is good practice to let the user specify where the model is
-    parser.add_argument("--model_path", type=str, default="./weights", help="Path to saved model")
+
     parser.add_argument("--test_file", type=str, default="./data/final/test.jsonl", help="Path to test dataset")
-    
-    # Your original arguments
+
     parser.add_argument("--test", action="store_true", help="Evaluate on test set")
     parser.add_argument("--predict", nargs="+", help="Run prediction on given sentences")
     
     args = parser.parse_args()
 
-    # 1. INITIALIZE THE CLASS ONCE
-    # This loads the heavy weights into memory
+    # Loads the heavy weights into memory
     try:
         ner_system = MountainNER(model_path=args.model_path)
     except Exception as e:
         print(f"Error loading model: {e}")
         exit(1)
 
-    # 2. HANDLE PREDICTION
+    # handle prediction
     if args.predict:
         print(f"\nRunning inference on {len(args.predict)} sentence(s)...\n")
         
@@ -261,12 +252,12 @@ if __name__ == "__main__":
         
         print("\n", ner_system.clean_predictions(results))
     
-    # 3. HANDLE EVALUATION
+    # handle evaluation
     if args.test:
-        # 1. Run evaluation (Returns a dictionary of dictionaries)
+        # Run evaluation (Returns a dictionary of dictionaries)
         results = ner_system.evaluate_file(args.test_file)
 
-        # 2. Loop through each report (Overall, EN, UA) and print nicely
+        # Loop through each report (Overall, EN, UA) and print nicely
         for language, metrics_dict in results.items():
             print(f"\n{'='*20}")
             print(f"REPORT: {language}")
@@ -275,7 +266,6 @@ if __name__ == "__main__":
             # Convert to DataFrame for pretty printing
             df = pd.DataFrame(metrics_dict).transpose()
             
-            # Optional: Drop the confusing average rows to keep it clean
             df_clean = df.drop(['micro avg', 'macro avg', 'weighted avg'], errors='ignore')
             
             # Round numbers to 2 decimal places for readability
