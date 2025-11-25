@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
     # Loads the heavy weights into memory
     try:
-        ner_system = MountainNER(model_path=args.model_path)
+        ner_system = MountainNER()
     except Exception as e:
         print(f"Error loading model: {e}")
         exit(1)

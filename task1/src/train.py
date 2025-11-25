@@ -1,12 +1,9 @@
-import torch
-import json
-import os
 from pathlib import Path
 from datasets import load_dataset
 from transformers import (
     AutoTokenizer, 
     AutoModelForTokenClassification, 
-    Trainer, 
+    Trainer,
     TrainingArguments, 
     DataCollatorForTokenClassification,
     pipeline
@@ -74,7 +71,9 @@ def tokenize_and_align_labels(examples):
 print("Initializing data loading...")
 
 script_dir = Path(__file__).parent.resolve()
-data_dir = script_dir / "data" / "final"
+project_root = script_dir.parent
+
+data_dir = project_root / "data" / "final"
 
 # Define the files
 data_files = {
