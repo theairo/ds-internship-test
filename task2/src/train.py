@@ -18,24 +18,23 @@ from torch.utils.data import Dataset, DataLoader
 # ==========================================
 
 # --- Path Configuration ---
-# 1. Determine where we are (Script Location)
+# Determine where we are (Script Location)
 script_path = Path(__file__).resolve()
 script_dir = script_path.parent       # e.g., /MyProject/code/
 project_dir = script_dir.parent       # e.g., /MyProject/
 
-# 2. Define Project Paths relative to the script
+# Define Project Paths relative to the script
 REPO_DIR_NAME = "SuperGluePretrainedNetwork" 
 repo_dir = script_dir / "external" / REPO_DIR_NAME
 data_dir = project_dir / "dataset_final"
 
-# --- Hyperparameters ---
+# Hyperparameters
 BATCH_SIZE = 1
 LEARNING_RATE = 1e-4
 EPOCHS = 30
-# DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DEVICE = "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# --- Model Config ---
+# Model Config
 MODEL_CONFIG = {
     'superpoint': {
         'nms_radius': 4,
@@ -49,7 +48,7 @@ MODEL_CONFIG = {
     }
 }
 
-# --- Imports from Repo ---
+# Imports from Repo
 try:
     from external.SuperGluePretrainedNetwork.models.superpoint import SuperPoint
     from external.SuperGluePretrainedNetwork.models.superglue import SuperGlue
@@ -60,7 +59,7 @@ except ImportError as e:
 
 
 # ==========================================
-# 3. AUGMENTATION UTILS
+# AUGMENTATION UTILS
 # ==========================================
 
 def sample_homography(shape, perturb_factor=0.1):
@@ -70,18 +69,18 @@ def sample_homography(shape, perturb_factor=0.1):
     """
     h, w = shape
     
-    # 1. Define original corners
+    # Define original corners
     pts1 = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
     pts2 = pts1.copy()
 
-    # 2. Perspective / Affine perturbations
+    # Perspective / Affine perturbations
     shift_x = np.random.uniform(-perturb_factor * w, perturb_factor * w, 4)
     shift_y = np.random.uniform(-perturb_factor * h, perturb_factor * h, 4)
     
     pts2[:, 0] += shift_x
     pts2[:, 1] += shift_y
 
-    # 3. Calculate Homography Matrix
+    # Calculate Homography Matrix
     H_mat = cv2.getPerspectiveTransform(pts1, pts2)
     return H_mat
 
@@ -102,7 +101,7 @@ def warp_keypoints(kpts, H):
 
 
 # ==========================================
-# 4. DATASET CLASS
+# DATASET CLASS
 # ==========================================
 
 class SeasonalDataset(Dataset):
@@ -126,7 +125,7 @@ class SeasonalDataset(Dataset):
         
         print(f"--- Loading data for: {split_mode} (Ratio: {split_ratio}) ---\n")
         
-        # 1. Collect ALL valid pairs first
+        # Collect ALL valid pairs first
         all_valid_pairs = []
 
         for tile_code in allowed_tiles:
@@ -148,12 +147,12 @@ class SeasonalDataset(Dataset):
                     if os.path.exists(path_b):
                         all_valid_pairs.append((path_a, path_b))
 
-        # 2. Shuffle Deterministically
+        # Shuffle Deterministically
         all_valid_pairs.sort() 
         random.seed(seed)
         random.shuffle(all_valid_pairs)
 
-        # 3. Apply the Split
+        # Apply the Split
         num_samples = len(all_valid_pairs)
         split_idx = int(num_samples * split_ratio)
 
@@ -193,7 +192,7 @@ class SeasonalDataset(Dataset):
 
 
 # ==========================================
-# 5. GEOMETRY & LOSS
+# GEOMETRY & LOSS
 # ==========================================
 
 def make_geometric_labels(kpts0, kpts1, H, threshold=4.0):
@@ -204,13 +203,13 @@ def make_geometric_labels(kpts0, kpts1, H, threshold=4.0):
     if len(kpts0) == 0 or len(kpts1) == 0:
         return torch.tensor([], dtype=torch.long, device=kpts0.device)
 
-    # 1. Project kpts0 using the Ground Truth Homography
+    # Project kpts0 using the Ground Truth Homography
     kpts0_projected = warp_keypoints(kpts0, H)
 
-    # 2. Compute Distance (Projected Kpts0 vs Actual Kpts1)
+    # Compute Distance (Projected Kpts0 vs Actual Kpts1)
     dist = torch.cdist(kpts0_projected, kpts1, p=2)
     
-    # 3. Find Matches
+    # Find Matches
     min_dist, nn_idx = torch.min(dist, dim=1)
     mask = min_dist < threshold
     
@@ -236,10 +235,10 @@ def compute_superglue_loss(pred_scores, gt_matches0, device):
 
 
 # ==========================================
-# 6. TRAINING LOOP
+# TRAINING LOOP
 # ==========================================
 
-# --- 1. Batch Processor (Logic for one batch) ---
+# --Batch Processor (Logic for one batch) --
 def process_batch(superglue, superpoint, batch, device, training=True):
     """
     Processes a single batch:
@@ -276,8 +275,6 @@ def process_batch(superglue, superpoint, batch, device, training=True):
         if len(kpts0) < 10 or len(kpts1) < 10:
             continue
 
-        # Compute Ground Truth Matches
-        # Ensure 'make_geometric_labels' and 'compute_superglue_loss' are defined elsewhere
         gt_matches0 = make_geometric_labels(kpts0, kpts1, H_current)
         
         # Prepare Input for SuperGlue
@@ -392,7 +389,7 @@ def main():
             optimizer=None, training=False
         )
         
-        print(f"--> Summary: Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        print(f"Summary: Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         
         history['epoch'].append(epoch + 1)
         history['train_loss'].append(train_loss)

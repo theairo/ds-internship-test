@@ -1,17 +1,26 @@
-# Model weights
+############################
+# Python
+############################
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+############################
+# Model Weights & Artifacts
+############################
 mnt_ner_model/
 
-# Notebook checkpoints
+############################
+# Jupyter
+############################
 .ipynb_checkpoints/
 
-__pycache__
-
+############################
+# Project Structure
+############################
 task1/
-
-task2/dataset_final
-
-task2/notebooks
-
-logs/
-
 task1/data/*
+
+task2/output/
+logs/
