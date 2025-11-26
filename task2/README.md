@@ -108,7 +108,7 @@ The pipeline exposes a dynamic threshold parameter. This allows users to perform
 - *output/:* Saved visualized matches.
 
 ## Setup and Installation
-You will need Python 3.9 or higher. While a powerful GPU is highly recommended for model training, the inference script runs efficiently on a standard CPU.
+Use Python 3.9 or 3.10. Some packages currently have issues installing on newer Python versions. While a powerful GPU is highly recommended for model training, the inference script runs efficiently on a standard CPU.
 
 ### Installation Steps
 1. Clone the repository to your local machine:
