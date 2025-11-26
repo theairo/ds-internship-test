@@ -1,0 +1,11 @@
+numpy
+opencv-python
+rasterio
+torch
+torchvision
+tqdm
+matplotlib
+pandas
+seaborn
+kornia
+huggingface_hub
