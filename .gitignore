@@ -6,7 +6,11 @@ mnt_ner_model/
 
 __pycache__
 
-task2/
+task1/
+
+task2/dataset_final
+
+task2/notebooks
 
 logs/
 
