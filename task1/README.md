@@ -36,6 +36,8 @@ I selected 'bert-base-multilingual-cased' as the base model. This allowed the su
 #### 3. Inference Pipeline Design
 I wrote a custom MountainNER class to handle the complexity of sub-word tokenization and giving an intuaitive interface to work with the model.
 
+**Link to trained model weights**: https://huggingface.co/nikolai-domashenko/mnt-ner-model
+
 ### Project Structure
 - *data/final/:* Contains the processed JSONL datasets (train, test, and validation splits).
 - *notebooks/data_preparation.ipynb:* The notebook used for generating data.
